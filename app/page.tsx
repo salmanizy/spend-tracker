@@ -11,16 +11,22 @@ import { ExpenseModal } from '@/components/ExpenseModal'
 import { DeleteConfirmModal } from '@/components/DeleteConfirmModal'
 
 function groupByMonth(expenses: Expense[]): MonthlyTotal[] {
-  const map: Record<string, number> = {}
+  const map: Record<string, { total: number; date: Date }> = {}
+  
   expenses.forEach((e) => {
     const d = new Date(e.date + 'T00:00:00')
     const key = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-    map[key] = (map[key] || 0) + e.amount
+    if (!map[key]) {
+      map[key] = { total: 0, date: new Date(d.getFullYear(), d.getMonth(), 1) }
+    }
+    map[key].total += e.amount
   })
+
   return Object.entries(map)
-    .map(([month, total]) => ({ month, total }))
-    .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+    .map(([month, { total, date }]) => ({ month, total, date }))
+    .sort((a, b) => a.date.getTime() - b.date.getTime()) // ← sort pakai objek Date asli
     .slice(-6)
+    .map(({ month, total }) => ({ month, total }))
 }
 
 export default function Home() {
