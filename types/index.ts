@@ -8,7 +8,7 @@ export type Category =
   | 'Transportation'
   | 'Other'
 
-export type PaymentMethod = 'Cash' | 'Bank'
+export type PaymentMethod = 'Bank' | 'Cash'
 
 export interface Expense {
   id: string

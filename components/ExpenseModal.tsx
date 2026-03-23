@@ -19,7 +19,7 @@ export function ExpenseModal({ expense, onClose, onSave }: Props) {
     description: '',
     amount: '',
     category: 'Food & Drinks' as Category,
-    payment_method: 'Cash' as PaymentMethod,
+    payment_method: 'Bank' as PaymentMethod,
     date: new Date().toISOString().split('T')[0],
   })
   const [loading, setLoading] = useState(false)
@@ -119,7 +119,7 @@ export function ExpenseModal({ expense, onClose, onSave }: Props) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ color: '#888', fontSize: 14 }}>Rp</span>
               <input
-                type="number"
+                type="tel"
                 placeholder="0.00"
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
@@ -146,7 +146,7 @@ export function ExpenseModal({ expense, onClose, onSave }: Props) {
           <div style={{ padding: '14px 16px', borderBottom: '1px solid #2e2e2e', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ color: '#888', fontSize: 14 }}>Payment</span>
             <div style={{ display: 'flex', gap: 8 }}>
-              {(['Cash', 'Bank'] as PaymentMethod[]).map((m) => (
+              {(['Bank', 'Cash'] as PaymentMethod[]).map((m) => (
                 <button
                   key={m}
                   onClick={() => setForm({ ...form, payment_method: m })}

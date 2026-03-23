@@ -36,7 +36,16 @@ export default function Home() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -61,14 +70,17 @@ export default function Home() {
     setLoading(true)
     try {
       const headers = await getAuthHeaders()
-      const [recentRes, allRes] = await Promise.all([
-        fetch('/api/expenses', { headers }),
-        fetch('/api/expenses?all=true', { headers }),
-      ])
-      const recentData = await recentRes.json()
-      const allData = await allRes.json()
-      setExpenses(recentData.expenses || [])
-      setAllExpenses(allData.expenses || [])
+      const res = await fetch('/api/expenses?all=true', { headers })
+      const data = await res.json()
+      const all: Expense[] = data.expenses || []
+
+      // Filter 30 hari terakhir di client
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      const recent = all.filter(e => new Date(e.date) >= thirtyDaysAgo)
+
+      setAllExpenses(all)
+      setExpenses(recent)
     } catch (e) {
       console.error(e)
     } finally {
@@ -98,6 +110,7 @@ export default function Home() {
     try {
       const headers = await getAuthHeaders()
       await fetch(`/api/expenses/${id}`, { method: 'DELETE', headers })
+      await new Promise(resolve => setTimeout(resolve, 300)) // tunggu 300ms
       await fetchExpenses()
     } finally {
       setDeleteLoading(false)
@@ -109,9 +122,17 @@ export default function Home() {
 
   const monthlyData = groupByMonth(allExpenses)
   const totalAllTime = allExpenses.reduce((s, e) => s + e.amount, 0)
-  const filteredExpenses = expenses.filter((e) =>
-    e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.category.toLowerCase().includes(searchQuery.toLowerCase())
+  
+  const filteredExpenses = (selectedMonth
+    ? allExpenses.filter((e) => {
+        const d = new Date(e.date + 'T00:00:00')
+        const key = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        return key === selectedMonth
+      })
+    : expenses
+  ).filter((e) =>
+    e.description.toLowerCase().includes(debouncedQuery.toLowerCase()) ||
+    e.category.toLowerCase().includes(debouncedQuery.toLowerCase())
   )
 
   if (!authChecked) {
@@ -166,12 +187,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* Chart */}
-        <MonthlyChart data={monthlyData} totalAllTime={totalAllTime} />
+        <MonthlyChart
+          data={monthlyData}
+          totalAllTime={totalAllTime}
+          selectedMonth={selectedMonth}
+          onSelectMonth={setSelectedMonth}
+        />
 
-        {/* List label */}
         <p style={{ color: '#888', fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
-          {searchQuery ? `Results for "${searchQuery}"` : 'Latest'}
+          {selectedMonth ? selectedMonth : debouncedQuery ? `Results for "${debouncedQuery}"` : 'Latest'}
         </p>
 
         {/* Expense list */}
