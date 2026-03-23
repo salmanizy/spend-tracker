@@ -1,204 +1,242 @@
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { LogOut, Wallet } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react'
+import { Plus, LogOut, Search, X } from 'lucide-react'
+import { createClient } from '@/lib/supabase'
+import { Expense, MonthlyTotal } from '@/types'
+import { AuthForm } from '@/components/AuthForm'
+import { MonthlyChart } from '@/components/MonthlyChart'
+import { ExpenseItem } from '@/components/ExpenseItem'
+import { ExpenseModal } from '@/components/ExpenseModal'
+import { DeleteConfirmModal } from '@/components/DeleteConfirmModal'
 
-// Import Komponen Modular kita
-import ChartSection from '@/components/ChartSection';
-import ExpenseForm from '@/components/ExpenseForm';
-import ExpenseList from '@/components/ExpenseList';
+function groupByMonth(expenses: Expense[]): MonthlyTotal[] {
+  const map: Record<string, number> = {}
+  expenses.forEach((e) => {
+    const d = new Date(e.date + 'T00:00:00')
+    const key = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    map[key] = (map[key] || 0) + e.amount
+  })
+  return Object.entries(map)
+    .map(([month, total]) => ({ month, total }))
+    .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+    .slice(-6)
+}
 
 export default function Home() {
-  const [session, setSession] = useState<any>(null);
-  const [expenses, setExpenses] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const supabase = createClient()
 
-  // State untuk Form
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [editId, setEditId] = useState<string | null>(null);
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([])
+  const [loading, setLoading] = useState(false)
+  const [showModal, setShowModal] = useState(false)
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showSearch, setShowSearch] = useState(false)
 
   useEffect(() => {
-    // Check session saat pertama kali load
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) fetchExpenses(session.user.id);
-      else setLoading(false);
-    });
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user)
+      setAuthChecked(true)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
-    // Listener untuk perubahan auth
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) fetchExpenses(session.user.id);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const fetchExpenses = async (userId: string) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/expenses?userId=${userId}`);
-      const data = await res.json();
-      setExpenses(data || []);
-    } finally {
-      setLoading(false);
+  const getAuthHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session?.access_token ?? ''}`,
     }
-  };
-
-  const handleAuth = async (type: 'login' | 'register') => {
-    if (type === 'register') {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) alert(error.message);
-      else alert('Cek email untuk verifikasi atau silakan login jika sudah aktif!');
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) alert(error.message);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!session) return;
-
-    const payload = {
-      user_id: session.user.id,
-      amount: Number(amount),
-      description,
-      date,
-    };
-
-    const url = editId ? `/api/expenses/${editId}` : '/api/expenses';
-    const method = editId ? 'PUT' : 'POST';
-
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        setEditId(null);
-        setAmount('');
-        setDescription('');
-        // Paksa refresh data setelah input berhasil
-        await fetchExpenses(session.user.id);
-        alert("Data berhasil disimpan!");
-      } else {
-        const err = await response.json();
-        alert("Gagal simpan: " + err.error);
-      }
-    } catch (error) {
-      console.error("Fetch error:", error);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (confirm('Hapus catatan ini?')) {
-      await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
-      fetchExpenses(session.user.id);
-    }
-  };
-
-  const handleEdit = (item: any) => {
-    setEditId(item.id);
-    setAmount(item.amount.toString());
-    setDescription(item.description);
-    setDate(item.date);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // Proses data untuk Chart (Akumulasi per bulan)
-  const chartData = expenses.reduce((acc: any[], curr: any) => {
-    const monthName = new Date(curr.date).toLocaleString('id-ID', { month: 'short' });
-    const existing = acc.find(item => item.name === monthName);
-    if (existing) existing.total += Number(curr.amount);
-    else acc.push({ name: monthName, total: Number(curr.amount) });
-    return acc;
-  }, []).reverse();
-
-  if (loading && session) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Memuat Data...</div>;
-
-  // --- VIEW: LOGIN ---
-  if (!session) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6">
-        <div className="w-full max-w-sm bg-white/[0.03] backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl">
-          <div className="flex justify-center mb-6">
-            <div className="p-4 bg-blue-600/20 rounded-2xl text-blue-500">
-              <Wallet size={32} />
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold text-zinc-100 mb-2 text-center">CatatDuit</h1>
-          <p className="text-zinc-500 text-center text-sm mb-8">Kelola pengeluaranmu dengan gaya minimalis.</p>
-          
-          <div className="space-y-4">
-            <input 
-              type="email" placeholder="Email" 
-              value={email}
-              className="w-full bg-zinc-900 text-white p-4 rounded-xl border border-white/5 focus:border-blue-500 transition-all outline-none"
-              onChange={(e) => setEmail(e.target.value)} 
-            />
-            <input 
-              type="password" placeholder="Password" 
-              value={password}
-              className="w-full bg-zinc-900 text-white p-4 rounded-xl border border-white/5 focus:border-blue-500 transition-all outline-none"
-              onChange={(e) => setPassword(e.target.value)} 
-            />
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => handleAuth('login')} className="flex-1 bg-blue-600 text-white p-4 rounded-xl font-bold hover:bg-blue-700 active:scale-95 transition-all">Login</button>
-              <button onClick={() => handleAuth('register')} className="flex-1 bg-zinc-800 text-zinc-300 p-4 rounded-xl font-bold hover:bg-zinc-700 active:scale-95 transition-all">Daftar</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
   }
 
-  // --- VIEW: DASHBOARD (MOBILE FIRST) ---
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-200 pb-24">
-      <div className="max-w-md mx-auto p-5 space-y-8">
-        
-        {/* Header */}
-        <header className="flex justify-between items-center py-2">
-          <div>
-            <h1 className="text-xl font-bold text-white">Halo, Salman!</h1>
-            <p className="text-xs text-zinc-500">Pantau pengeluaranmu hari ini.</p>
-          </div>
-          <button 
-            onClick={() => supabase.auth.signOut()} 
-            className="p-3 bg-zinc-900 rounded-2xl text-zinc-500 hover:text-red-400 transition-colors"
-          >
-            <LogOut size={20} />
-          </button>
-        </header>
+  const fetchExpenses = useCallback(async () => {
+    setLoading(true)
+    try {
+      const headers = await getAuthHeaders()
+      const [recentRes, allRes] = await Promise.all([
+        fetch('/api/expenses', { headers }),
+        fetch('/api/expenses?all=true', { headers }),
+      ])
+      const recentData = await recentRes.json()
+      const allData = await allRes.json()
+      setExpenses(recentData.expenses || [])
+      setAllExpenses(allData.expenses || [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-        {/* 1. Dashboard Chart */}
-        <ChartSection data={chartData} />
+  useEffect(() => {
+    if (user) fetchExpenses()
+  }, [user, fetchExpenses])
 
-        {/* 2. Form Input/Edit */}
-        <ExpenseForm 
-          onSubmit={handleSubmit}
-          amount={amount} setAmount={setAmount}
-          description={description} setDescription={setDescription}
-          date={date} setDate={setDate}
-          isEditing={!!editId}
-        />
+  const handleSave = async (data: Omit<Expense, 'id' | 'user_id' | 'created_at'>, id?: string) => {
+    const headers = await getAuthHeaders()
+    if (id) {
+      const res = await fetch(`/api/expenses/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error) }
+    } else {
+      const res = await fetch('/api/expenses', { method: 'POST', headers, body: JSON.stringify(data) })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error) }
+    }
+    await fetchExpenses()
+    setEditingExpense(null)
+  }
 
-        {/* 3. History List */}
-        <ExpenseList 
-          items={expenses} 
-          onDelete={handleDelete} 
-          onEdit={handleEdit} 
-        />
+  const handleDelete = async (id: string) => {
+    setDeleteLoading(true)
+    try {
+      const headers = await getAuthHeaders()
+      await fetch(`/api/expenses/${id}`, { method: 'DELETE', headers })
+      await fetchExpenses()
+    } finally {
+      setDeleteLoading(false)
+      setDeletingId(null)
+    }
+  }
 
+  const handleLogout = async () => { await supabase.auth.signOut() }
+
+  const monthlyData = groupByMonth(allExpenses)
+  const totalAllTime = allExpenses.reduce((s, e) => s + e.amount, 0)
+  const filteredExpenses = expenses.filter((e) =>
+    e.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    e.category.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 24, height: 24, border: '2px solid #333', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
       </div>
+    )
+  }
+
+  if (!user) return <AuthForm onSuccess={() => fetchExpenses()} />
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#000000', fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
+      <div style={{ maxWidth: 430, margin: '0 auto', padding: '56px 16px 100px' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <div style={{ background: '#1c1c1c', borderRadius: 20, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>Expenses</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="#666">
+              <path d="M5 7L1 3h8L5 7z" />
+            </svg>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => { setShowSearch(!showSearch); setSearchQuery('') }}
+              style={{ width: 36, height: 36, background: '#1c1c1c', border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              {showSearch ? <X size={16} color="#fff" /> : <Search size={16} color="#fff" />}
+            </button>
+            <button
+              onClick={handleLogout}
+              style={{ width: 36, height: 36, background: '#1c1c1c', border: 'none', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              <LogOut size={16} color="#fff" />
+            </button>
+          </div>
+        </div>
+
+        {/* Search */}
+        {showSearch && (
+          <div style={{ marginBottom: 16 }}>
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search expenses..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ width: '100%', background: '#1c1c1c', border: '1px solid #2a2a2a', borderRadius: 16, padding: '12px 16px', color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+        )}
+
+        {/* Chart */}
+        <MonthlyChart data={monthlyData} totalAllTime={totalAllTime} />
+
+        {/* List label */}
+        <p style={{ color: '#888', fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
+          {searchQuery ? `Results for "${searchQuery}"` : 'Latest'}
+        </p>
+
+        {/* Expense list */}
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
+            <div style={{ width: 24, height: 24, border: '2px solid #333', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          </div>
+        ) : filteredExpenses.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <p style={{ color: '#444', fontSize: 14 }}>No expenses found</p>
+            <p style={{ color: '#333', fontSize: 12, marginTop: 4 }}>Tap + to add your first expense</p>
+          </div>
+        ) : (
+          <div style={{ background: '#1c1c1c', borderRadius: 24, overflow: 'hidden' }}>
+            {filteredExpenses.map((expense, i) => (
+              <div key={expense.id} style={{ borderTop: i === 0 ? 'none' : '1px solid #262626' }}>
+                <ExpenseItem
+                  expense={expense}
+                  onEdit={(e) => { setEditingExpense(e); setShowModal(true) }}
+                  onDelete={(id) => setDeletingId(id)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* FAB */}
+      <button
+        onClick={() => { setEditingExpense(null); setShowModal(true) }}
+        style={{
+          position: 'fixed', bottom: 32,
+          left: '50%', transform: 'translateX(-50%)',
+          width: 56, height: 56, borderRadius: '50%',
+          background: '#fff', border: 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          transition: 'transform 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.transform = 'translateX(-50%) scale(1.08)')}
+        onMouseLeave={e => (e.currentTarget.style.transform = 'translateX(-50%) scale(1)')}
+      >
+        <Plus size={24} color="#000" />
+      </button>
+
+      {showModal && (
+        <ExpenseModal
+          expense={editingExpense}
+          onClose={() => { setShowModal(false); setEditingExpense(null) }}
+          onSave={handleSave}
+        />
+      )}
+
+      {deletingId && (
+        <DeleteConfirmModal
+          onConfirm={() => handleDelete(deletingId)}
+          onCancel={() => setDeletingId(null)}
+          loading={deleteLoading}
+        />
+      )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        * { box-sizing: border-box; }
+      `}</style>
     </div>
-  );
+  )
 }

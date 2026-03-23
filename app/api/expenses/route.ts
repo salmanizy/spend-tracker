@@ -1,59 +1,89 @@
-// app/api/expenses/route.ts
-import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-export async function GET(req: Request) {
+function getSupabaseWithAuth(req: NextRequest) {
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {}
+  )
+}
+
+// GET /api/expenses - list expenses for the last 30 days (or all)
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get('userId');
+    const supabase = getSupabaseWithAuth(req)
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
 
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 401 });
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data, error } = await supabase
+    const { searchParams } = new URL(req.url)
+    const all = searchParams.get('all') === 'true'
+
+    let query = supabase
       .from('expenses')
       .select('*')
-      .eq('user_id', userId)
-      .order('date', { ascending: false });
+      .eq('user_id', user.id)
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false })
 
-    if (error) throw error;
-    return NextResponse.json(data);
-  } catch (err: any) {
-    console.error("API GET Error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    if (!all) {
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      query = query.gte('date', thirtyDaysAgo.toISOString().split('T')[0])
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ expenses: data })
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-export async function POST(req: Request) {
+// POST /api/expenses - create a new expense
+export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    
-    // Validasi data sebelum kirim ke Supabase
-    if (!body.user_id || !body.amount) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    const supabase = getSupabaseWithAuth(req)
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await req.json()
+    const { amount, description, date, category, payment_method } = body
+
+    if (!amount || !description || !date || !category || !payment_method) {
+      return NextResponse.json({ error: 'All fields are required' }, { status: 400 })
     }
 
     const { data, error } = await supabase
       .from('expenses')
-      .insert([
-        {
-          user_id: body.user_id,
-          amount: Number(body.amount),
-          description: body.description,
-          date: body.date,
-        }
-      ])
-      .select();
+      .insert({
+        user_id: user.id,
+        amount: Number(amount),
+        description,
+        date,
+        category,
+        payment_method,
+      })
+      .select()
+      .single()
 
     if (error) {
-      console.error("Supabase Database Error:", error.message);
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json(data);
-  } catch (err: any) {
-    console.error("API POST Internal Error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ expense: data }, { status: 201 })
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
