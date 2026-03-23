@@ -240,6 +240,7 @@ export default function Home() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
           transition: 'transform 0.15s',
+          zIndex: 12,
         }}
         onMouseEnter={e => (e.currentTarget.style.transform = 'translateX(-50%) scale(1.08)')}
         onMouseLeave={e => (e.currentTarget.style.transform = 'translateX(-50%) scale(1)')}
