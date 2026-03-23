@@ -30,7 +30,7 @@ export function ExpenseItem({ expense, onEdit, onDelete }: Props) {
       {open && (
         <div
           onClick={() => setOpen(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 10 }}
+          style={{ position: 'fixed', inset: 0 }}
         />
       )}
 
@@ -42,7 +42,7 @@ export function ExpenseItem({ expense, onEdit, onDelete }: Props) {
           background: open ? '#222' : 'transparent',
           transition: 'background 0.15s',
           cursor: 'pointer',
-          position: 'relative', zIndex: 11,
+          position: 'relative',
         }}
       >
         <CategoryIcon category={expense.category} />
